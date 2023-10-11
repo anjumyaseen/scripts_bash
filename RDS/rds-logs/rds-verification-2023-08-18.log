@@ -1,0 +1,26 @@
+RDS_List
+Total number of RDS Snapshots created today in us-east-1 region: ----------------------------------------------------------------------------------------------------------------------
+|                                             DescribeDBClusterSnapshots                                             |
++--------------------------+-----------------------------------------------------------------------------------------+
+|          Created         |                                           ID                                            |
++--------------------------+-----------------------------------------------------------------------------------------+
+|  2023-08-18T05:44:05.063Z|  rds:applications-rds-auroradbcluster-iogecgelirrc-2023-08-18-05-44                     |
+|  2023-08-18T10:10:26.839Z|  rds:apps-dev-mysql-01-2023-08-18-10-10                                                 |
+|  2023-08-18T03:51:58.941Z|  rds:apps-test-mysql-01-2023-08-18-03-51                                                |
+|  2023-08-18T05:31:24.499Z|  rds:app-test-1-2023-08-18-05-31                                                        |
+|  2023-08-18T03:11:07.183Z|  rds:aurora8-h1-cluster-2023-08-18-03-11                                                |
+|  2023-08-18T03:04:42.139Z|  rds:aurora8-p1-cluster-2023-08-18-03-04                                                |
+|  2023-08-18T03:14:04.410Z|  rds:aurora8-p2-cluster-2023-08-18-03-14                                                |
+|  2023-08-18T08:09:59.011Z|  rds:aurora-rds-01-cluster-2023-08-18-08-09                                             |
+|  2023-08-18T04:20:47.410Z|  rds:aurora-rds-02-cluster-2023-08-18-04-20                                             |
+|  2023-08-18T04:21:02.020Z|  rds:aurora-rds-02-copy-cluster-2023-08-18-04-21                                        |
+|  2023-08-18T03:08:37.107Z|  rds:aurora-rds-04-cluster-2023-08-18-03-08                                             |
+|  2023-08-18T07:46:09.448Z|  rds:aurora-rds-05-cluster-2023-08-18-07-46                                             |
+|  2023-08-18T09:13:13.044Z|  rds:aurora-rds-06-cluster-2023-08-18-09-13                                             |
+|  2023-08-18T07:00:25.693Z|  rds:aurora-rds-07-cluster-2023-08-18-07-00                                             |
+|  2023-08-18T06:46:18.703Z|  rds:bitbucket-bitbucketdcstack-1vc5hc-auroradbcluster-rsonj9yn5xb8-2023-08-18-06-46    |
+|  2023-08-18T03:42:25.528Z|  rds:pg01-cluster-1-cluster-2023-08-18-03-42                                            |
+|  2023-08-18T07:25:06.990Z|  rds:prod-keycloak-keycloakdatabaseauroraserverlessclu-16a376853w1to-2023-08-18-07-25   |
+|  2023-08-18T02:13:57.711Z|  rds:staging-aurora-01-2023-08-18-02-13                                                 |
++--------------------------+-----------------------------------------------------------------------------------------+
+Total number of RDS Snapshots created today in us-east-1 region: 18
