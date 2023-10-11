@@ -1,0 +1,353 @@
+ Name used to identify the Bitbucket/Mesh instance being backed up. This appears in archive names and AWS snapshot tags.
+# It should not contain spaces and must be under 100 characters long.
+INSTANCE_NAME=bitbucket-staging-BitbucketDCStack-1CK6FM3XVZ8Z3
+
+# Type of instance being backed up:
+# - <leave blank> or bitbucket-dc  - The instance being backed up is a Bitbucket DC instance.
+# - bitbucket-mesh                 - The instance being backed up is a Bitbucket Mesh instance.
+INSTANCE_TYPE=bitbucket-dc
+
+# The base URL of the Bitbucket instance to be backed up. It cannot end on a '/'. While backing up Mesh nodes, the URL of
+# the Bitbucket DC instance should be set.
+BITBUCKET_URL=https://git-staging.gradientai.systems/
+
+# Owner and group of ${BITBUCKET_HOME}:
+BITBUCKET_UID=bitbucket
+BITBUCKET_GID=bitbucket
+
+# Strategy for backing up the Bitbucket/Mesh home directory and data stores (if configured):
+#  - amazon-ebs         - Amazon EBS snapshots of the volumes containing data for Bitbucket Server/Mesh
+#  - rsync              - "rsync" of the disk contents to a temporary location. NOTE: This can NOT be used
+#                         with BACKUP_ZERO_DOWNTIME=true.
+#  - zfs                - ZFS snapshot strategy for disk backups.
+#  - none               - Do not attempt to backup the home directory or data stores.
+# Note: this config var was previously named BACKUP_HOME_TYPE
+BACKUP_DISK_TYPE=amazon-ebs
+
+# Strategy for backing up the database:
+#  - amazon-rds         - Amazon RDS snapshots
+#  - mysql              - MySQL using "mysqldump" to backup and "mysql" to restore
+#  - postgresql         - PostgreSQL using "pg_dump" to backup and "pg_restore" to restore
+#  - postgresql-fslevel - PostgreSQL with data directory located in the file system volume as home directory (so
+#                         that it will be included implicitly in the home volume snapshot)
+#  - none               - Do not attempt to backup the database.
+#
+# Note: This property is ignored while backing up Mesh nodes.
+BACKUP_DATABASE_TYPE=amazon-rds
+
+# Strategy for archiving backups and/or copying them to an offsite location:
+#  - <leave blank>      - Do not use an archiving strategy
+#  - aws-snapshots      - AWS EBS and/or RDS snapshots, with optional copy to another region
+#  - gpg-zip            - "gpg-zip" archive
+#  - tar                - Unix "tar" archive
+BACKUP_ARCHIVE_TYPE=aws-snapshots
+
+# Strategy for backing up Elasticsearch:
+#  - <leave blank>      - No separate snapshot and restore of Elasticsearch state (default) - recommended for Bitbucket
+#                         Server instances configured to use the (default) bundled Elasticsearch instance. In this case
+#                         all Elasticsearch state is stored under ${BITBUCKET_HOME}/shared and therefore already
+#                         included in the home directory snapshot implicitly.
+#
+#                         NOTE: If Bitbucket is configured to use a remote Elasticsearch instance (which all Bitbucket
+#                         Data Center instances must be), then its state is NOT included implicitly in home directory
+#                         backups, and may therefore take some to rebuild after a restore UNLESS one of the following
+#                         strategies is used.
+#
+#  - fs                 - Shared filesystem - requires all data and master nodes to mount a shared file system to the
+#                         same mount point and that it is configured in the elasticsearch.yml file. See
+#                         https://www.elastic.co/guide/en/elasticsearch/reference/current/modules-snapshots.html
+#
+#  - s3                 - Amazon S3 bucket - requires the Elasticsearch Cloud plugin to be installed. See
+#                         https://www.elastic.co/guide/en/elasticsearch/plugins/2.3/cloud-aws.html
+#
+#  - amazon-es          - Amazon Elasticsearch Service - uses an S3 bucket as a snapshot repository. Requires both
+#                         python and the python boto package to be installed, in order to sign the requests to AWS ES.
+#
+# Note: This property is ignored while backing up Mesh nodes.
+BACKUP_ELASTICSEARCH_TYPE=amazon-es
+
+# Strategy for Bitbucket/Mesh disk disaster recovery:
+#  - zfs                - ZFS snapshot strategy for disk replication.
+#  - none               - Do not attempt to replicate data on disk.
+STANDBY_DISK_TYPE=none
+
+# Strategy for replicating the database:
+#  - amazon-rds         - Amazon RDS Read replica
+#  - postgresql         - PostgreSQL replication
+#  - none               - Do not attempt to replicate the database.
+#
+# Note: This property is ignored while backing up Mesh nodes.
+STANDBY_DATABASE_TYPE=none
+
+# If BACKUP_ZERO_DOWNTIME is set to true, data on disk and the database will be backed up WITHOUT locking Bitbucket
+# in maintenance mode. NOTE: This can NOT be used with Bitbucket Server versions older than 4.8. For more information,
+# see https://confluence.atlassian.com/display/BitbucketServer/Using+Bitbucket+Zero+Downtime+Backup.
+# Make sure you read and understand this document before uncommenting this variable.
+BACKUP_ZERO_DOWNTIME=true
+
+if [ "${BACKUP_ZERO_DOWNTIME}" != "true" ]; then
+    # The username and password to a user with the necessary permissions required to lock Bitbucket in maintenance
+    # mode.
+    BITBUCKET_BACKUP_USER=
+    BITBUCKET_BACKUP_PASS=
+fi
+
+# Sub-options for each disk backup strategy
+case ${BACKUP_DISK_TYPE} in
+    amazon-ebs)
+        # The mount point and device name for each attached EBS volume. This should include the volume containing the
+        # home directory, as well as the volumes for each data store (if data stores are attached to the instance).
+        # Entries should be of the format MOUNT_POINT:DEVICE_NAME
+        # Note: this config var should contain the details for the home directory that were previously configured in
+        #       HOME_DIRECTORY_MOUNT_POINT and HOME_DIRECTORY_DEVICE_NAME.
+        EBS_VOLUME_MOUNT_POINT_AND_DEVICE_NAMES=(/media/atl:/dev/xvdf)
+        # The mount point for the home directory. Must be configured here as well as in the variable above so that the
+        # home directory can be identified.
+        HOME_DIRECTORY_MOUNT_POINT=/media/atl
+
+        # The type of volume to create when restoring the ebs volumes (home directory and data stores)
+        # Note: this config var was previously named RESTORE_HOME_DIRECTORY_VOLUME_TYPE
+        RESTORE_DISK_VOLUME_TYPE=gp2
+        # Required if RESTORE_DISK_VOLUME_TYPE has been set to 'io1'. Ignored otherwise.
+        # The IOPS that should be provisioned for the new volume. Note: Maximum IOPS to volume size ratio is 30
+        # Note: this config var was previously named RESTORE_HOME_DIRECTORY_IOPS
+        RESTORE_DISK_IOPS=1000
+
+        # === Optionals ===
+        # Set FILESYSTEM_TYPE=zfs to run ZFS specific commands on backup and restore of EBS snapshots.
+        FILESYSTEM_TYPE=ext4
+        if [ "${FILESYSTEM_TYPE}" = "zfs" ]; then
+            ZFS_FILESYSTEM_NAMES=()
+            for volume in "${EBS_VOLUME_MOUNT_POINT_AND_DEVICE_NAMES[@]}"; do
+                mount_point="$(echo "${volume}" | cut -d ":" -f1)"
+                ZFS_FILESYSTEM_NAMES+=($(run sudo zfs list -H -o name,mountpoint | grep "${mount_point}" | cut -f1))
+            done
+        fi
+        ;;
+    rsync)
+        # The path to the Bitbucket/Mesh home directory (with trailing /)
+        BITBUCKET_HOME=/var/atlassian/application-data/bitbucket/
+        # Paths to all configured data stores (with trailing /)
+        # Only required if one or more data stores is attached to the instance.
+        BITBUCKET_DATA_STORES=()
+        # Optional list of repo IDs which should be excluded from the backup. For example: (2 5 88)
+        # Note: This property is ignored while backing up Mesh nodes.
+        BITBUCKET_BACKUP_EXCLUDE_REPOS=()
+        ;;
+    zfs)
+        # The name of each filesystem that holds file server data for Bitbucket Server/Mesh. This should, at a minimum,
+        # include the home directory filesystem, and if configured, the filesystems for each data store.
+        # This must be the same name(s) on the standby if using replication.
+        # Note: this config var should contain the value previously in ZFS_HOME_TANK_NAME
+        ZFS_FILESYSTEM_NAMES=(tank/atlassian-home)
+
+        # ==== DISASTER RECOVERY VARS ====
+
+        # The name of the ZFS filesystem containing the shared home directory. This is needed for disaster recovery so
+        # that the home directory can be promoted.
+        ZFS_HOME_FILESYSTEM=
+
+        # The user for SSH when running replication commands on the standby file server.
+        # Note this user needs password-less sudo on the standby to run zfs commands and password-less ssh from
+        # the primary file server to the standby file server.
+        STANDBY_SSH_USER=
+        # (Optional) Append flags to the SSH commands. e.g. "-i private_key.pem"
+        #            Useful flags for unattended ssh commands: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        STANDBY_SSH_OPTIONS=
+
+        # The hostname of the standby file server
+        STANDBY_SSH_HOST=
+        ;;
+esac
+
+# Sub-options for each database backup strategy
+#
+# Note: This property is ignored while backing up Mesh nodes.
+case ${BACKUP_DATABASE_TYPE} in
+    amazon-rds)
+        # RDS instance ID of the database to backup
+        RDS_INSTANCE_ID=bitbucket-staging-bitbucketdcstack-auroradbcluster-rdpdalge08yv
+
+        # === Optionals ===
+
+        # The instance class to use when restoring the database, if not set AWS will use the instance class that was used when creating the snapshot
+        RESTORE_RDS_INSTANCE_CLASS=db.t3.medium
+        # Whether or not to restore the database as a Multi-AZ deployment
+        RESTORE_RDS_MULTI_AZ=true
+        # The subnet in which the database will be restored, if not set AWS will attempt to use the account default.
+        RESTORE_RDS_SUBNET_GROUP_NAME=bitbucket-staging-bitbucketdcstack-1ck6fm3xvz8z3-dbcluster-hses8hro1dlg-auroradatabase-zbgkxy2zbq71-auroradbsubnetgroup-abvvfrfixn2j
+        # The security group to assign to the restored instance, if not set AWS will attempt to use the account default.
+        RESTORE_RDS_SECURITY_GROUP=sg-012eadce07681d7ee
+        # Is this RDS an Aurora cluster? If not set, we assume that this RDS instance isn't an Aurora cluster.
+        IS_AURORA=
+
+        # ==== DISASTER RECOVERY VARS ====
+
+        # In standby instances using RDS read replicas, set this variable to the RDS read replica instance id.
+        # Only used on a Disaster Recovery standby system that has been configured with an RDS read replica of your primary system's RDS database.
+        # See https://confluence.atlassian.com/display/BitbucketServer/Disaster+recovery+guide+for+Bitbucket+Data+Center for more information.
+        DR_RDS_READ_REPLICA=
+        ;;
+    mysql)
+        BITBUCKET_DB=bitbucket
+        MYSQL_HOST=
+        MYSQL_USERNAME=
+        MYSQL_PASSWORD=
+        MYSQL_BACKUP_OPTIONS=
+        ;;
+    mssql)
+        BITBUCKET_DB=bitbucket
+        ;;
+    postgresql)
+        # The connection details for your primary instance's PostgreSQL database.  The pg_hba.conf file must
+        # be configured to allow the backup and restore scripts full access as POSTGRES_USERNAME with the
+        # specified PGPASSWORD. When Disaster Recovery is used, POSTGRES_HOST must also be accessible from
+        # the standby system with the same level of access.
+        BITBUCKET_DB=bitbucket
+        POSTGRES_HOST=
+        POSTGRES_USERNAME=
+        export PGPASSWORD=
+        POSTGRES_PORT=5432
+
+        # ==== DISASTER RECOVERY VARS ====
+
+        # The full path to the standby server's PostgreSQL data folder. i.e "/var/lib/pgsql94/data"
+        # Note: Attempt auto-detection based on major version (Works with CentOS, RHEL and Amazon Linux, override if unsure)
+        STANDBY_DATABASE_DATA_DIR="/var/lib/pgsql${psql_major}/data"
+        # The user which runs the PostgreSQL system service. This is normally "postgres"
+        STANDBY_DATABASE_SERVICE_USER=postgres
+        # The name of the replication slot
+        STANDBY_DATABASE_REPLICATION_SLOT_NAME=bitbucket
+        # The username and password of the user that will be used to execute the replication.
+        STANDBY_DATABASE_REPLICATION_USER_USERNAME=
+        STANDBY_DATABASE_REPLICATION_USER_PASSWORD=
+        # The postgres service name for stopping / starting it.
+        # Note: Attempt auto-detection based on major version (Works with CentOS, RHEL and Amazon Linux, override if unsure)
+        STANDBY_DATABASE_SERVICE_NAME="postgresql${psql_major}"
+        ;;
+
+    postgresql-fslevel)
+        # The postgres service name for stopping / starting it at restore time.
+        POSTGRESQL_SERVICE_NAME="postgresql${psql_major}"
+        ;;
+esac
+
+case ${BACKUP_ARCHIVE_TYPE} in
+    aws-snapshots)
+        # The ID of the AWS account that will receive copies of the EBS and/or RDS snapshots.
+        BACKUP_DEST_AWS_ACCOUNT_ID=$AWS_ACCOUNT_ID
+        # The AWS Role ARN to assume when tagging the EBS and/or RDS snapshots.
+        BACKUP_DEST_AWS_ROLE=
+
+        # This variable is only required if you wish to copy the EBS and RDS snapshots to another region.
+        # If set, this variable will copy the EBS & RDS snapshot to the specified region.
+        BACKUP_DEST_REGION=$AWS_REGION
+        ;;
+    *)
+        # The path to working folder for the backup
+        BITBUCKET_BACKUP_ROOT=
+        BITBUCKET_BACKUP_DB=${BITBUCKET_BACKUP_ROOT}/bitbucket-db/
+        BITBUCKET_BACKUP_HOME=${BITBUCKET_BACKUP_ROOT}/bitbucket-home/
+        BITBUCKET_BACKUP_DATA_STORES=${BITBUCKET_BACKUP_ROOT}/bitbucket-data-stores/
+
+        # The path to where the backup archives are stored
+        BITBUCKET_BACKUP_ARCHIVE_ROOT=
+
+        # Options for the gpg-zip archive type
+        BITBUCKET_BACKUP_GPG_RECIPIENT=
+        ;;
+esac
+
+# Options to pass to every "curl" command
+CURL_OPTIONS="-L -s -f"
+
+
+# === AWS Variables ===
+if [ "amazon-ebs" = "${BACKUP_DISK_TYPE}" -o "amazon-rds" = "${BACKUP_DATABASE_TYPE}" ]; then
+
+    AWS_INFO=$(curl ${CURL_OPTIONS} http://169.254.169.254/latest/dynamic/instance-identity/document)
+
+    # The AWS account ID of the instance. Used to create Amazon Resource Names (ARNs)
+    AWS_ACCOUNT_ID=$(echo "${AWS_INFO}" | jq -r .accountId)
+
+     # The availability zone in which volumes will be created when restoring an instance.
+    AWS_AVAILABILITY_ZONE=$(echo "${AWS_INFO}" | jq -r .availabilityZone)
+
+    # The region for the resources Bitbucket is using (volumes, instances, snapshots, etc)
+    AWS_REGION=$(echo "${AWS_INFO}" | jq -r .region)
+
+    # The EC2 instance ID
+    AWS_EC2_INSTANCE_ID=$(echo "${AWS_INFO}" | jq -r .instanceId)
+
+    # Additional AWS tags for EBS and RDS snapshot, tags needs to be in JSON format without enclosing square brackets:
+    # Example: AWS_ADDITIONAL_TAGS='{"Key":"example_key", "Value":"example_value"}'
+    AWS_ADDITIONAL_TAGS=
+
+    # Ensure we fsfreeze while snapshots of ebs volumes are taken
+    FSFREEZE=true
+fi
+
+# Used by the scripts for verbose logging. If not true only errors will be shown.
+BITBUCKET_VERBOSE_BACKUP=${BITBUCKET_VERBOSE_BACKUP:-true}
+
+# HipChat options
+HIPCHAT_URL=https://api.hipchat.com
+HIPCHAT_ROOM=
+HIPCHAT_TOKEN=
+
+# The number of backups to retain. After backups are taken, all old snapshots except for the most recent
+# ${KEEP_BACKUPS} are deleted.  Set to 0 to disable cleanup of old snapshots.
+# This is also used by Disaster Recovery to limit snapshots.
+KEEP_BACKUPS=0
+
+# ==== Elasticsearch VARS ====
+
+# The Bitbucket search index (default is bitbucket-search-v1). Most users will NOT need to change this.
+ELASTICSEARCH_INDEX_NAME=bitbucket-search-v1
+# The hostname (and port, if required) for the Elasticsearch instance
+ELASTICSEARCH_HOST=bitbuck-elasti-1qv9i40d4dmny
+ELASTICSEARCH_REPOSITORY_NAME=bitbucket-snapshots
+
+case ${BACKUP_ELASTICSEARCH_TYPE} in
+    amazon-es)
+        # Configuration for the Amazon Elasticsearch Service
+        ELASTICSEARCH_S3_BUCKET=
+        ELASTICSEARCH_S3_BUCKET_REGION=us-east-1
+        # The IAM role that can be used to snapshot AWS Elasticsearch, used to configure the S3 snapshot repository
+        ELASTICSEARCH_SNAPSHOT_IAM_ROLE=arn:aws:iam::385227289220:role/aws-service-role/es.amazonaws.com/AWSServiceRoleForAmazonElasticsearchService
+        ;;
+    s3)
+        # Configuration for the Amazon S3 snapshot repository (s3)
+        ELASTICSEARCH_S3_BUCKET=
+        ELASTICSEARCH_S3_BUCKET_REGION=us-east-1
+        # Elasticsearch credentials
+        ELASTICSEARCH_USERNAME=bitbucket
+        ELASTICSEARCH_PASSWORD=a6*c-.VZXF66Ds.ty.HwtX_x
+        ;;
+    fs)
+        # Configuration for the shared filesystem snapshot repository (fs)
+        ELASTICSEARCH_REPOSITORY_LOCATION=
+        # Elasticsearch credentials
+        ELASTICSEARCH_USERNAME=bitbucket
+        ELASTICSEARCH_PASSWORD=a6*c-.VZXF66Ds.ty.HwtX_x
+        ;;
+esac
+
+# ==== DISASTER RECOVERY VARS ====
+
+# Only used on a Bitbucket Data Center primary instance which has been configured with a Disaster Recovery standby system.
+# See https://confluence.atlassian.com/display/BitbucketServer/Disaster+recovery+guide+for+Bitbucket+Data+Center for more information.
+# The JDBC URL for the STANDBY database server.
+# WARNING: It is imperative that you set this to the correct JDBC URL for your STANDBY database.
+# During fail-over, 'promote-home.sh' will write this to your 'bitbucket.properties' file so that
+# your standby Bitbucket instance will connect to the right database. If this is incorrect, then
+# in a fail-over scenario your standby Bitbucket instance may fail to start or even connect to the
+# incorrect database.
+#
+# Example for PostgreSQL:
+#           "jdbc:postgres://standby-db.my-company.com:${POSTGRES_PORT}/${BITBUCKET_DB}"
+# Example for PostgreSQL running in Amazon RDS
+#           jdbc:postgres://${RDS_ENDPOINT}/${BITBUCKET_DB}
+#
+# Note: This property is ignored while backing up Mesh nodes.
+STANDBY_JDBC_URL=
